@@ -9,7 +9,7 @@ final class AvatarController
 {
     public static function show(string $file): void
     {
-        Auth::requireLogin();
+        Auth::requireAnyLogin();
 
         // 保存名は必ず 32桁の16進 + .webp。それ以外は受け付けない (パストラバーサル対策)
         if (preg_match('/\A[0-9a-f]{32}\.webp\z/', $file) !== 1) {

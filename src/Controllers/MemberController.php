@@ -1,15 +1,12 @@
 <?php
 declare(strict_types=1);
 
+/** 管理者による全メンバーの閲覧・登録・編集・削除。本人による編集は MyPageController */
 final class MemberController
 {
-    private const MAX_AVATAR_BYTES = 2 * 1024 * 1024; // 2MB
-    private const AVATAR_SIZE      = 256;
-    private const MAX_BIO_LENGTH   = 500;
-
     public static function index(): void
     {
-        Auth::requireLogin();
+        Auth::requireAdmin();
 
         $skillIds = array_values(array_unique(
             array_filter(
@@ -40,7 +37,7 @@ final class MemberController
 
     public static function show(int $id): void
     {
-        Auth::requireLogin();
+        Auth::requireAdmin();
 
         $member = MemberRepository::find($id);
         if ($member === null) {
@@ -48,20 +45,23 @@ final class MemberController
         }
 
         view('members/show', [
-            'member' => $member,
-            'skills' => MemberRepository::skillsForMembers([$id])[$id] ?? [],
+            'member'  => $member,
+            'skills'  => MemberRepository::skillsForMembers([$id])[$id] ?? [],
+            'isAdmin' => true,
+            'backUrl' => '/',
+            'editUrl' => '/members/' . $id . '/edit',
         ], $member['name']);
     }
 
     public static function createForm(): void
     {
-        Auth::requireLogin();
+        Auth::requireAdmin();
         self::renderForm(null, ['name' => '', 'bio' => ''], [], []);
     }
 
     public static function editForm(int $id): void
     {
-        Auth::requireLogin();
+        Auth::requireAdmin();
 
         $member = MemberRepository::find($id);
         if ($member === null) {
@@ -72,25 +72,29 @@ final class MemberController
 
     public static function store(): void
     {
-        Auth::requireLogin();
+        Auth::requireAdmin();
         Csrf::verify();
 
-        [$name, $bio, $levels, $errors] = self::validate();
-        $avatar = self::saveAvatar($_FILES['avatar'] ?? null, $errors);
+        [$name, $bio, $levels, $errors] = MemberProfileForm::validate();
+        $avatar = MemberProfileForm::saveAvatar($_FILES['avatar'] ?? null, $errors);
+        [$loginId, $password, $credentialErrors] = self::validateCredential(null);
+        $errors = [...$errors, ...$credentialErrors];
 
         if ($errors !== []) {
-            self::renderForm(null, ['name' => $name, 'bio' => $bio], $levels, $errors);
+            self::renderForm(null, ['name' => $name, 'bio' => $bio], $levels, $errors, $loginId);
             return;
         }
 
         $id = MemberRepository::create($name, $bio, $avatar, $levels);
+        self::saveCredential($id, $loginId, $password);
+
         flash($name . ' を登録しました。');
         redirect('/members/' . $id);
     }
 
     public static function update(int $id): void
     {
-        Auth::requireLogin();
+        Auth::requireAdmin();
         Csrf::verify();
 
         $member = MemberRepository::find($id);
@@ -98,19 +102,22 @@ final class MemberController
             abort(404, 'メンバーが見つかりません。');
         }
 
-        [$name, $bio, $levels, $errors] = self::validate();
-        $avatar = self::saveAvatar($_FILES['avatar'] ?? null, $errors);
+        [$name, $bio, $levels, $errors] = MemberProfileForm::validate();
+        $avatar = MemberProfileForm::saveAvatar($_FILES['avatar'] ?? null, $errors);
+        [$loginId, $password, $credentialErrors] = self::validateCredential($id);
+        $errors = [...$errors, ...$credentialErrors];
 
         if ($errors !== []) {
-            self::renderForm($member, ['name' => $name, 'bio' => $bio], $levels, $errors);
+            self::renderForm($member, ['name' => $name, 'bio' => $bio], $levels, $errors, $loginId);
             return;
         }
 
         MemberRepository::update($id, $name, $bio, $avatar, $levels);
+        self::saveCredential($id, $loginId, $password);
 
         // 差し替え後に古い画像を消す。DB 更新が成功してから消すこと
         if ($avatar !== null && !empty($member['avatar_path'])) {
-            self::deleteAvatarFile((string)$member['avatar_path']);
+            MemberProfileForm::deleteAvatarFile((string)$member['avatar_path']);
         }
 
         flash($name . ' を更新しました。');
@@ -119,7 +126,7 @@ final class MemberController
 
     public static function destroy(int $id): void
     {
-        Auth::requireLogin();
+        Auth::requireAdmin();
         Csrf::verify();
 
         $member = MemberRepository::find($id);
@@ -127,9 +134,10 @@ final class MemberController
             abort(404, 'メンバーが見つかりません。');
         }
 
+        // member_credentials は ON DELETE CASCADE で一緒に消える
         MemberRepository::delete($id);
         if (!empty($member['avatar_path'])) {
-            self::deleteAvatarFile((string)$member['avatar_path']);
+            MemberProfileForm::deleteAvatarFile((string)$member['avatar_path']);
         }
 
         flash($member['name'] . ' を削除しました。');
@@ -138,121 +146,68 @@ final class MemberController
 
     // ------------------------------------------------------------------
 
-    private static function renderForm(?array $member, array $values, array $levels, array $errors): void
-    {
+    private static function renderForm(
+        ?array $member,
+        array $values,
+        array $levels,
+        array $errors,
+        ?string $loginIdValue = null
+    ): void {
+        $memberId   = $member['id'] ?? null;
+        $credential = $memberId !== null ? MemberCredentialRepository::findByMemberId((int)$memberId) : null;
+
         view('members/form', [
-            'member'     => $member,
-            'values'     => $values,
-            'levels'     => $levels,
-            'errors'     => $errors,
-            'categories' => SkillRepository::categoriesWithSkills(),
-        ], $member === null ? 'メンバーを登録' : $member['name'] . ' を編集');
-    }
-
-    /** @return array{0:string,1:?string,2:array<int,int>,3:string[]} */
-    private static function validate(): array
-    {
-        $errors = [];
-
-        $name = trim((string)($_POST['name'] ?? ''));
-        if ($name === '') {
-            $errors[] = '名前を入力してください。';
-        } elseif (mb_strlen($name) > 100) {
-            $errors[] = '名前は 100 文字以内で入力してください。';
-        }
-
-        $bio = trim((string)($_POST['bio'] ?? ''));
-        if (mb_strlen($bio) > self::MAX_BIO_LENGTH) {
-            $errors[] = '自己紹介文は ' . self::MAX_BIO_LENGTH . ' 文字以内で入力してください。';
-        }
-
-        // 存在するスキル ID かつ level 1-3 のものだけを採用する。
-        // 「未経験」は行を作らない (01_要件定義.md §4)
-        $valid  = array_flip(SkillRepository::existingIds());
-        $levels = [];
-        foreach ((array)($_POST['skill_level'] ?? []) as $skillId => $level) {
-            $skillId = (int)$skillId;
-            $level   = (int)$level;
-            if (isset($valid[$skillId]) && in_array($level, [1, 2, 3], true)) {
-                $levels[$skillId] = $level;
-            }
-        }
-
-        return [$name, $bio === '' ? null : $bio, $levels, $errors];
+            'member'       => $member,
+            'values'       => $values,
+            'levels'       => $levels,
+            'errors'       => $errors,
+            'categories'   => SkillRepository::categoriesWithSkills(),
+            'isAdmin'      => true,
+            'actionUrl'    => $memberId !== null ? '/members/' . $memberId : '/members',
+            'backUrl'      => $memberId !== null ? '/members/' . $memberId : '/',
+            'deleteUrl'    => $memberId !== null ? '/members/' . $memberId . '/delete' : null,
+            // バリデーション失敗時に入力値を再表示するため、DB の値より優先する
+            'loginIdValue' => $loginIdValue ?? ($credential['login_id'] ?? ''),
+        ], $member === null ? 'メンバーを追加' : $member['name'] . ' を編集');
     }
 
     /**
-     * アップロードされた画像を 256px の正方形 WebP にして保存する。
-     * 拡張子は信用せず finfo で判定する (02_基本設計.md §7)。
+     * ログイン情報の入力を検証する。管理者専用の項目 (04_改修_メンバー個人ログイン.md)。
      *
-     * @return string|null 保存したファイル名。アップロードが無ければ null
+     * @return array{0:string,1:?string,2:string[]} [ログインID, パスワード(未入力ならnull), エラー]
      */
-    private static function saveAvatar(?array $file, array &$errors): ?string
+    private static function validateCredential(?int $memberId): array
     {
-        if ($file === null || ($file['error'] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_NO_FILE) {
-            return null;
-        }
-        if ($file['error'] !== UPLOAD_ERR_OK) {
-            $errors[] = '画像のアップロードに失敗しました。';
-            return null;
-        }
-        if (!is_uploaded_file($file['tmp_name'])) {
-            $errors[] = '画像のアップロードに失敗しました。';
-            return null;
-        }
-        if ($file['size'] > self::MAX_AVATAR_BYTES) {
-            $errors[] = '画像は 2MB 以下にしてください。';
-            return null;
+        $errors  = [];
+        $loginId = trim((string)($_POST['login_id'] ?? ''));
+        $password = (string)($_POST['password'] ?? '');
+
+        if ($loginId !== '') {
+            if (mb_strlen($loginId) > 64) {
+                $errors[] = 'ログインIDは64文字以内で入力してください。';
+            }
+            if (MemberCredentialRepository::loginIdTakenByOther($loginId, $memberId ?? 0)) {
+                $errors[] = 'そのログインIDは既に使われています。';
+            }
         }
 
-        $mime = (new finfo(FILEINFO_MIME_TYPE))->file($file['tmp_name']);
-        if (!in_array($mime, ['image/jpeg', 'image/png', 'image/webp'], true)) {
-            $errors[] = '画像は JPEG / PNG / WebP のいずれかにしてください。';
-            return null;
+        // 新規発行 (これまで未発行) にはパスワードが必須。
+        // 発行済みメンバーの更新でパスワード欄が空なら「変更しない」の意味になる (呼び出し側で処理)。
+        $alreadyIssued = $memberId !== null && MemberCredentialRepository::findByMemberId($memberId) !== null;
+        if ($loginId !== '' && $password === '' && !$alreadyIssued) {
+            $errors[] = 'ログインIDを設定する場合は、パスワードも入力してください。';
         }
 
-        $src = @imagecreatefromstring((string)file_get_contents($file['tmp_name']));
-        if ($src === false) {
-            $errors[] = '画像を読み込めませんでした。';
-            return null;
-        }
-
-        // 中央を正方形に切り出してから縮小する
-        $w    = imagesx($src);
-        $h    = imagesy($src);
-        $side = min($w, $h);
-        $dst  = imagecreatetruecolor(self::AVATAR_SIZE, self::AVATAR_SIZE);
-        imagealphablending($dst, false);
-        imagesavealpha($dst, true);
-        imagecopyresampled(
-            $dst, $src,
-            0, 0,
-            intdiv($w - $side, 2), intdiv($h - $side, 2),
-            self::AVATAR_SIZE, self::AVATAR_SIZE,
-            $side, $side
-        );
-
-        // 保存名は元のファイル名を使わない
-        $filename = bin2hex(random_bytes(16)) . '.webp';
-        $ok = imagewebp($dst, AVATAR_DIR . '/' . $filename, 85);
-        imagedestroy($src);
-        imagedestroy($dst);
-
-        if ($ok === false) {
-            $errors[] = '画像を保存できませんでした。';
-            return null;
-        }
-        return $filename;
+        return [$loginId, $password === '' ? null : $password, $errors];
     }
 
-    private static function deleteAvatarFile(string $filename): void
+    private static function saveCredential(int $memberId, string $loginId, ?string $password): void
     {
-        if (preg_match('/\A[0-9a-f]{32}\.webp\z/', $filename) !== 1) {
+        if ($loginId === '') {
+            // ログインID欄を空にして保存 = 発行を取り消す
+            MemberCredentialRepository::revoke($memberId);
             return;
         }
-        $path = AVATAR_DIR . '/' . $filename;
-        if (is_file($path)) {
-            @unlink($path);
-        }
+        MemberCredentialRepository::upsert($memberId, $loginId, $password);
     }
 }

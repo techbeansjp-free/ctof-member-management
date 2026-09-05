@@ -1,8 +1,8 @@
 <div class="gate">
-  <form method="post" action="/login">
+  <form method="post" action="<?= e($actionUrl) ?>">
     <?= Csrf::field() ?>
     <h1>ログイン</h1>
-    <p class="gate-sub">メンバー名簿を開きます</p>
+    <p class="gate-sub"><?= e($subtitle) ?></p>
 
     <?php if ($error !== null): ?>
       <p class="alert"><?= e($error) ?></p>

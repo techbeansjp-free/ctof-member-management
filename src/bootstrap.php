@@ -8,10 +8,13 @@ require APP_ROOT . '/src/helpers.php';
 require APP_ROOT . '/src/Database.php';
 require APP_ROOT . '/src/Csrf.php';
 require APP_ROOT . '/src/Auth.php';
+require APP_ROOT . '/src/MemberProfileForm.php';
 require APP_ROOT . '/src/Repositories/SkillRepository.php';
 require APP_ROOT . '/src/Repositories/MemberRepository.php';
+require APP_ROOT . '/src/Repositories/MemberCredentialRepository.php';
 require APP_ROOT . '/src/Controllers/AuthController.php';
 require APP_ROOT . '/src/Controllers/MemberController.php';
+require APP_ROOT . '/src/Controllers/MyPageController.php';
 require APP_ROOT . '/src/Controllers/AvatarController.php';
 
 // HTTPS のときだけ Secure 属性を付ける。

@@ -1,11 +1,11 @@
 <?php
+// 管理者 (MemberController) と本人 (MyPageController) の両方から使う共有ビュー。
+// isAdmin=false のときはログイン情報欄と削除ボタンを出さない (04_改修_メンバー個人ログイン.md)。
 $isEdit = $member !== null;
-$action = $isEdit ? '/members/' . (int)$member['id'] : '/members';
-$back   = $isEdit ? '/members/' . (int)$member['id'] : '/';
 ?>
-<a class="back" href="<?= e($back) ?>">← 戻る</a>
+<a class="back" href="<?= e($backUrl) ?>">← 戻る</a>
 
-<form class="editor" method="post" action="<?= e($action) ?>" enctype="multipart/form-data">
+<form class="editor" method="post" action="<?= e($actionUrl) ?>" enctype="multipart/form-data">
   <?= Csrf::field() ?>
   <h1><?= $isEdit ? e($member['name']) . ' を編集' : 'メンバーを追加' ?></h1>
 
@@ -41,6 +41,28 @@ $back   = $isEdit ? '/members/' . (int)$member['id'] : '/';
     <p class="note">500 文字まで</p>
   </div>
 
+  <?php if ($isAdmin): ?>
+    <div class="field">
+      <span class="flabel">ログイン情報 <em>本人が「マイページ」から編集するためのもの</em></span>
+      <div class="two-up">
+        <div class="field">
+          <label for="login_id">ログインID</label>
+          <input id="login_id" name="login_id" type="text" maxlength="64"
+                 value="<?= e($loginIdValue) ?>" placeholder="空欄のままなら未発行">
+        </div>
+        <div class="field">
+          <label for="password">パスワード</label>
+          <input id="password" name="password" type="password" autocomplete="new-password"
+                 placeholder="<?= $loginIdValue !== '' ? '変更する場合のみ入力' : '新規発行時は入力必須' ?>">
+        </div>
+      </div>
+      <p class="note">
+        パスワードはハッシュ化して保存するため、設定後にこの画面で確認することはできません。
+        設定した値は控えて本人に伝えてください。ログインIDを空にして保存すると、発行を取り消します。
+      </p>
+    </div>
+  <?php endif; ?>
+
   <div class="field">
     <span class="flabel">スキル <em>持っていないものは「−」のまま</em></span>
 
@@ -74,16 +96,16 @@ $back   = $isEdit ? '/members/' . (int)$member['id'] : '/';
 
   <div class="editor-actions">
     <button type="submit" class="btn btn-solid"><?= $isEdit ? '変更を保存' : '追加する' ?></button>
-    <a class="btn btn-quiet" href="<?= e($back) ?>">やめる</a>
+    <a class="btn btn-quiet" href="<?= e($backUrl) ?>">やめる</a>
   </div>
 </form>
 
-<?php if ($isEdit): ?>
+<?php if ($deleteUrl !== null): ?>
   <details class="remove">
     <summary>このメンバーを削除する</summary>
     <div class="remove-body">
       <p><?= e($member['name']) ?> と登録済みのスキルをすべて削除します。元に戻せません。</p>
-      <form method="post" action="/members/<?= (int)$member['id'] ?>/delete">
+      <form method="post" action="<?= e($deleteUrl) ?>">
         <?= Csrf::field() ?>
         <button type="submit" class="btn btn-mark">削除する</button>
       </form>

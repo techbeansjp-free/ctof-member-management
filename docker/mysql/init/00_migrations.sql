@@ -12,4 +12,4 @@ CREATE TABLE schema_migrations (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- 01_schema.sql に取り込み済みのマイグレーション:
---   (まだ無し)
+INSERT INTO schema_migrations (version) VALUES ('001_add_member_credentials');

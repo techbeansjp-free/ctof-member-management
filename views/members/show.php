@@ -4,7 +4,9 @@ foreach ($skills as $s) {
     $grouped[$s['category_name']][] = $s;
 }
 ?>
-<a class="back" href="/">← メンバー名簿</a>
+<?php if ($backUrl !== null): ?>
+  <a class="back" href="<?= e($backUrl) ?>">← メンバー名簿</a>
+<?php endif; ?>
 
 <article class="profile">
   <header class="profile-head">
@@ -13,7 +15,7 @@ foreach ($skills as $s) {
       <h1><?= e($member['name']) ?></h1>
       <p class="profile-meta">スキル <?= count($skills) ?> 件</p>
     </div>
-    <a class="btn" href="/members/<?= (int)$member['id'] ?>/edit">編集</a>
+    <a class="btn" href="<?= e($editUrl) ?>">編集</a>
   </header>
 
   <?php if (!empty($member['bio'])): ?>

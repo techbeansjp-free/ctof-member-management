@@ -29,6 +29,16 @@ try {
         MemberController::destroy((int)$m[1]);
     } elseif (preg_match('#\A/avatars/([A-Za-z0-9._-]+)\z#', $path, $m) === 1 && $method === 'GET') {
         AvatarController::show($m[1]);
+    } elseif ($path === '/mypage/login') {
+        $method === 'POST' ? MyPageController::login() : MyPageController::showLogin();
+    } elseif ($path === '/mypage/logout' && $method === 'POST') {
+        MyPageController::logout();
+    } elseif ($path === '/mypage/edit') {
+        $method === 'POST' ? MyPageController::update() : MyPageController::editForm();
+    } elseif ($path === '/mypage' && $method === 'GET') {
+        // /mypage/* はすべて固定パス。member_id は一切 URL に出てこない
+        // (04_改修_メンバー個人ログイン.md — URL に ID を含めない設計で IDOR を防ぐ)
+        MyPageController::show();
     } else {
         abort(404, 'ページが見つかりません。');
     }
