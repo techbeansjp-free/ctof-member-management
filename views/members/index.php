@@ -1,7 +1,8 @@
 <?php $filtered = $selectedSkills !== [] || $keyword !== '' || $minLevel > 1; ?>
 <div class="workspace">
 
-  <form class="filters" method="get" action="/">
+  <form class="filters" method="get" action="/" data-tidy>
+   <div class="filters-scroll">
     <div class="filters-group">
       <label class="filters-label" for="q">名前</label>
       <input id="q" type="search" name="q" value="<?= e($keyword) ?>" placeholder="氏名の一部">
@@ -49,9 +50,12 @@
         <?php endforeach; ?>
       </div>
     </div>
+   </div>
 
     <div class="filters-actions">
-      <button type="submit" class="btn btn-solid btn-wide">絞り込む</button>
+      <button type="submit" class="btn btn-solid btn-wide">
+        絞り込む <span class="picked" data-picked-count></span>
+      </button>
       <?php if ($filtered): ?>
         <a class="btn btn-wide" href="/">条件を外す</a>
       <?php endif; ?>
