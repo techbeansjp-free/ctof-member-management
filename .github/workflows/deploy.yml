@@ -1,0 +1,177 @@
+name: Deploy
+
+# main に push すると本番 (https://skillmap.techbeans.info) に反映される。
+# 手で流したいときは Actions タブから "Run workflow"。
+#
+# 仕組み:
+#   1. OIDC で AWS の一時クレデンシャルを受け取る (長期のアクセスキーは持たない)
+#   2. Lightsail のファイアウォールの 22番に、この runner のIPだけを一時的に足す
+#   3. SSH してサーバ上の ~/deploy.sh を叩く (デプロイ本体はサーバ側にある)
+#   4. 成否によらずファイアウォールを元の状態に戻す
+#
+# サーバ側の準備は infra/30〜32 のスクリプトが済ませてある。
+# このファイルの正本は infra/app-templates/github-workflow-deploy.yml。
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: デプロイするブランチ
+        required: false
+        default: main
+
+# デプロイ同士がファイアウォールの書き換えで衝突しないよう直列化する。
+# 走行中のデプロイはキャンセルしない (中途半端な状態で止まる方が危ない)。
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  id-token: write   # OIDC のトークン発行に必要
+  contents: read
+
+env:
+  AWS_REGION: ap-northeast-1
+  INSTANCE_NAME: skillmap
+  FQDN: skillmap.techbeans.info
+  ROLE_ARN: arn:aws:iam::164933021637:role/github-actions-skillmap-deploy
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: production
+      url: https://skillmap.techbeans.info
+
+    steps:
+      - name: デプロイ対象を決める
+        id: target
+        run: |
+          BRANCH="${{ github.event.inputs.branch || github.ref_name }}"
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+          echo "### デプロイ: \`$BRANCH\`" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: AWS 認証 (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: gha-deploy-${{ github.run_id }}
+
+      - name: SSH を一時開放
+        id: fw
+        run: |
+          set -euo pipefail
+
+          # 復元用に今の状態をまるごと保存する。
+          # put-instance-public-ports は全置換なので、開けるときも閉じるときも
+          # 「開いているポート全部」を渡す必要がある。
+          aws lightsail get-instance-port-states \
+            --instance-name "$INSTANCE_NAME" --output json > /tmp/fw-before.json
+          echo "--- 現在のファイアウォール ---"
+          jq -r '.portStates[] | select(.state=="open")
+                 | "  \(.fromPort)/\(.protocol)  \((.cidrs // []) | join(", "))"' /tmp/fw-before.json
+
+          RUNNER_IP=$(curl -sS --max-time 10 https://checkip.amazonaws.com | tr -d '\n')
+          echo "runner の IP: $RUNNER_IP"
+
+          HOST=$(aws lightsail get-instance --instance-name "$INSTANCE_NAME" \
+                   --query 'instance.publicIpAddress' --output text)
+          echo "host=$HOST" >> "$GITHUB_OUTPUT"
+
+          # 22番の cidrs に runner の IP を足す。他のポートはそのまま。
+          # 開発者の作業IPを消さないので、デプロイ中に手元のSSHが締め出されない。
+          jq -r --arg ip "$RUNNER_IP/32" '
+            [ .portStates[] | select(.state=="open")
+              | "fromPort=\(.fromPort),toPort=\(.toPort),protocol=\(.protocol | ascii_upcase),cidrs="
+                + ( ((.cidrs // []) + (if .fromPort == 22 then [$ip] else [] end))
+                    | unique | join(",") )
+            ] | join("\n")' /tmp/fw-before.json > /tmp/port-infos-open.txt
+
+          # 22番が閉じていた場合は行ごと存在しないので、その場合だけ足す
+          grep -q '^fromPort=22,' /tmp/port-infos-open.txt \
+            || echo "fromPort=22,toPort=22,protocol=TCP,cidrs=$RUNNER_IP/32" >> /tmp/port-infos-open.txt
+
+          # shellcheck disable=SC2046
+          aws lightsail put-instance-public-ports \
+            --instance-name "$INSTANCE_NAME" \
+            --port-infos $(cat /tmp/port-infos-open.txt) >/dev/null
+          echo "✅ 22番に $RUNNER_IP/32 を追加した"
+
+      - name: SSH 鍵を用意
+        env:
+          # run: に ${{ }} を直接書くと、値が埋め込まれたスクリプトが runner の
+          # ディスクに書かれる。env: 経由ならプロセスの環境変数に留まる。
+          # 鍵に $ や ` が混ざったときの展開事故も防げる。
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts_deploy
+          chmod 600 ~/.ssh/known_hosts_deploy
+
+      - name: デプロイ
+        run: |
+          set -euo pipefail
+          # ホスト鍵は Secrets に固定してある。StrictHostKeyChecking=yes で検証する
+          # (=no にすると中間者攻撃に気づけない)。
+          ssh -i ~/.ssh/deploy_key \
+              -o UserKnownHostsFile=~/.ssh/known_hosts_deploy \
+              -o StrictHostKeyChecking=yes \
+              -o ConnectTimeout=15 \
+              "ubuntu@${{ steps.fw.outputs.host }}" \
+              "~/deploy.sh '${{ steps.target.outputs.branch }}'"
+
+      - name: 外部から疎通確認
+        run: |
+          set -euo pipefail
+          echo "--- https://$FQDN/ ---"
+          # 証明書の検証込みで叩く (ssl_verify_result=0 なら OK)
+          curl -sS -o /tmp/body.html \
+            -w "HTTP %{http_code} / TLS検証 %{ssl_verify_result} / %{time_total}s\n" \
+            --max-time 20 "https://$FQDN/" | tee /tmp/result.txt
+          grep -q "HTTP 2" /tmp/result.txt || { echo "❌ 2xx が返っていない"; head -30 /tmp/body.html; exit 1; }
+
+          echo "--- http → https のリダイレクト ---"
+          curl -sS -o /dev/null -w "HTTP %{http_code} → %{redirect_url}\n" --max-time 20 "http://$FQDN/"
+
+          {
+            echo "### ✅ デプロイ完了"
+            echo ""
+            echo "- URL: https://$FQDN/"
+            echo "- コミット: \`${{ github.sha }}\`"
+            echo "- 応答: $(cat /tmp/result.txt)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # 失敗してもキャンセルされても必ず閉じる。
+      # step の outcome ではなく保存ファイルの有無で判定する:
+      # put が成功した直後に同じ step 内で落ちても、確実に復元が走るようにするため。
+      - name: ファイアウォールを元に戻す
+        if: always()
+        run: |
+          set -euo pipefail
+          if [ ! -f /tmp/fw-before.json ]; then
+            echo "開放前の状態を保存できていない = まだ書き換えていない。何もしない"
+            exit 0
+          fi
+          jq -r '
+            [ .portStates[] | select(.state=="open")
+              | "fromPort=\(.fromPort),toPort=\(.toPort),protocol=\(.protocol | ascii_upcase),cidrs="
+                + ((.cidrs // []) | join(","))
+            ] | join("\n")' /tmp/fw-before.json > /tmp/port-infos-restore.txt
+
+          # shellcheck disable=SC2046
+          aws lightsail put-instance-public-ports \
+            --instance-name "$INSTANCE_NAME" \
+            --port-infos $(cat /tmp/port-infos-restore.txt) >/dev/null
+
+          echo "--- 復元後 ---"
+          aws lightsail get-instance-port-states --instance-name "$INSTANCE_NAME" --output json \
+            | jq -r '.portStates[] | select(.state=="open")
+                     | "  \(.fromPort)/\(.protocol)  \((.cidrs // []) | join(", "))"'
