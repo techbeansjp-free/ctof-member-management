@@ -16,5 +16,9 @@
     <input id="password" name="password" type="password" autocomplete="current-password" required>
 
     <button type="submit" class="btn btn-solid btn-wide">ログイン</button>
+
+    <p class="gate-switch">
+      <a href="<?= e($otherLoginUrl) ?>"><?= e($otherLoginLabel) ?></a>
+    </p>
   </form>
 </div>

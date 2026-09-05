@@ -15,12 +15,7 @@ final class MyPageController
         if (Auth::checkMember()) {
             redirect('/mypage');
         }
-        view('login', [
-            'error'     => null,
-            'loginId'   => '',
-            'actionUrl' => '/mypage/login',
-            'subtitle'  => '自分の情報を編集します',
-        ], 'ログイン');
+        view('login', self::viewData('', null), 'ログイン');
     }
 
     public static function login(): void
@@ -35,12 +30,7 @@ final class MyPageController
         }
 
         http_response_code(401);
-        view('login', [
-            'error'     => 'ログインIDまたはパスワードが違います。',
-            'loginId'   => $loginId,
-            'actionUrl' => '/mypage/login',
-            'subtitle'  => '自分の情報を編集します',
-        ], 'ログイン');
+        view('login', self::viewData($loginId, 'ログインIDまたはパスワードが違います。'), 'ログイン');
     }
 
     public static function logout(): void
@@ -114,6 +104,19 @@ final class MyPageController
     }
 
     // ------------------------------------------------------------------
+
+    /** @see AuthController::viewData() 対になる導線 (管理者用ログインへ) */
+    private static function viewData(string $loginId, ?string $error): array
+    {
+        return [
+            'error'           => $error,
+            'loginId'         => $loginId,
+            'actionUrl'       => '/mypage/login',
+            'subtitle'        => '自分の情報を編集します',
+            'otherLoginUrl'   => '/login',
+            'otherLoginLabel' => '管理者の方はこちら',
+        ];
+    }
 
     private static function renderForm(array $member, array $values, array $levels, array $errors): void
     {
