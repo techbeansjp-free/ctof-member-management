@@ -146,11 +146,13 @@ jobs:
         run: |
           set -euo pipefail
           echo "--- https://$FQDN/ ---"
-          # 証明書の検証込みで叩く (ssl_verify_result=0 なら OK)
-          curl -sS -o /tmp/body.html \
-            -w "HTTP %{http_code} / TLS検証 %{ssl_verify_result} / %{time_total}s\n" \
+          # 証明書の検証込みで叩く (ssl_verify_result=0 なら OK)。
+          # -L でリダイレクトを追う: 未ログインだと / は /login へ 302 するので、
+          # 追わずに 2xx を要求すると正常な状態を失敗と判定してしまう。
+          curl -sSL -o /tmp/body.html \
+            -w "最終 HTTP %{http_code} / TLS検証 %{ssl_verify_result} / %{time_total}s / %{url_effective}\n" \
             --max-time 20 "https://$FQDN/" | tee /tmp/result.txt
-          grep -q "HTTP 2" /tmp/result.txt || { echo "❌ 2xx が返っていない"; head -30 /tmp/body.html; exit 1; }
+          grep -q "最終 HTTP 2" /tmp/result.txt || { echo "❌ 2xx が返っていない"; head -30 /tmp/body.html; exit 1; }
 
           echo "--- http → https のリダイレクト ---"
           curl -sS -o /dev/null -w "HTTP %{http_code} → %{redirect_url}\n" --max-time 20 "http://$FQDN/"
