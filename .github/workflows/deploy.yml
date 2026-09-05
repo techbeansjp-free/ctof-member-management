@@ -71,6 +71,17 @@ jobs:
           # 「開いているポート全部」を渡す必要がある。
           aws lightsail get-instance-port-states \
             --instance-name "$INSTANCE_NAME" --output json > /tmp/fw-before.json
+
+          # 中身が取れたことを必ず確かめる。
+          # ここが空や壊れた JSON のまま先へ進むと、復元時に「開いているポートが
+          # 1つも無い」内容を put することになり、80/443 ごと閉じてサイトが落ちる。
+          # 取れていないならファイルごと消して、復元側にも何もさせない。
+          if ! jq -e '.portStates | length > 0' /tmp/fw-before.json >/dev/null 2>&1; then
+            echo "❌ ファイアウォールの現状を取得できなかった"
+            rm -f /tmp/fw-before.json
+            exit 1
+          fi
+
           echo "--- 現在のファイアウォール ---"
           jq -r '.portStates[] | select(.state=="open")
                  | "  \(.fromPort)/\(.protocol)  \((.cidrs // []) | join(", "))"' /tmp/fw-before.json
@@ -94,6 +105,8 @@ jobs:
           # 22番が閉じていた場合は行ごと存在しないので、その場合だけ足す
           grep -q '^fromPort=22,' /tmp/port-infos-open.txt \
             || echo "fromPort=22,toPort=22,protocol=TCP,cidrs=$RUNNER_IP/32" >> /tmp/port-infos-open.txt
+
+          [ -s /tmp/port-infos-open.txt ] || { echo "❌ 適用内容が空"; rm -f /tmp/fw-before.json; exit 1; }
 
           # shellcheck disable=SC2046
           aws lightsail put-instance-public-ports \
@@ -150,13 +163,16 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       # 失敗してもキャンセルされても必ず閉じる。
-      # step の outcome ではなく保存ファイルの有無で判定する:
+      # step の outcome ではなく保存内容の中身で判定する:
       # put が成功した直後に同じ step 内で落ちても、確実に復元が走るようにするため。
       - name: ファイアウォールを元に戻す
         if: always()
         run: |
           set -euo pipefail
-          if [ ! -f /tmp/fw-before.json ]; then
+          # ファイルの「有無」ではなく「中身」で判定する。
+          # 取得に失敗して空ファイルだけ残ったケースを開いていると、
+          # 空の port-infos を put して全ポートを閉じる事故になる。
+          if ! jq -e '.portStates | length > 0' /tmp/fw-before.json >/dev/null 2>&1; then
             echo "開放前の状態を保存できていない = まだ書き換えていない。何もしない"
             exit 0
           fi
@@ -165,6 +181,13 @@ jobs:
               | "fromPort=\(.fromPort),toPort=\(.toPort),protocol=\(.protocol | ascii_upcase),cidrs="
                 + ((.cidrs // []) | join(","))
             ] | join("\n")' /tmp/fw-before.json > /tmp/port-infos-restore.txt
+
+          # 最後の砦。空のまま put すると全ポートが閉じる
+          if [ ! -s /tmp/port-infos-restore.txt ]; then
+            echo "❌ 復元内容が空。put すると全ポートが閉じるので中止する"
+            echo "   手で直すこと: infra/01-create-instance.sh"
+            exit 1
+          fi
 
           # shellcheck disable=SC2046
           aws lightsail put-instance-public-ports \
