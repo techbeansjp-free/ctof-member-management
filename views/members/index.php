@@ -1,39 +1,44 @@
-<?php
-$hasFilter = $selectedSkills !== [] || $keyword !== '' || $minLevel > 1;
-?>
-<div class="layout">
+<?php $filtered = $selectedSkills !== [] || $keyword !== '' || $minLevel > 1; ?>
+<div class="workspace">
 
-  <aside class="sidebar">
-    <form method="get" action="/">
-      <div class="field">
-        <label for="q">名前で探す</label>
-        <input id="q" type="search" name="q" value="<?= e($keyword) ?>" placeholder="例: 田中">
-      </div>
+  <form class="filters" method="get" action="/">
+    <div class="filters-group">
+      <label class="filters-label" for="q">名前</label>
+      <input id="q" type="search" name="q" value="<?= e($keyword) ?>" placeholder="氏名の一部">
+    </div>
 
-      <div class="field">
-        <label for="level">レベル下限</label>
-        <select id="level" name="level">
-          <option value="1" <?= $minLevel === 1 ? 'selected' : '' ?>>すべて</option>
-          <option value="2" <?= $minLevel === 2 ? 'selected' : '' ?>>実務経験あり 以上</option>
-          <option value="3" <?= $minLevel === 3 ? 'selected' : '' ?>>指導できる</option>
-        </select>
-        <p class="hint">選択したスキルに対する条件です</p>
-      </div>
+    <div class="filters-group">
+      <label class="filters-label" for="level">下限レベル</label>
+      <select id="level" name="level">
+        <option value="1" <?= $minLevel === 1 ? 'selected' : '' ?>>指定なし</option>
+        <option value="2" <?= $minLevel === 2 ? 'selected' : '' ?>>実務経験あり 以上</option>
+        <option value="3" <?= $minLevel === 3 ? 'selected' : '' ?>>指導できる</option>
+      </select>
+      <ul class="legend">
+        <?php foreach (skill_levels() as $lv => $label): ?>
+          <li><?= level_meter($lv) ?><?= e($label) ?></li>
+        <?php endforeach; ?>
+      </ul>
+      <p class="note">選んだスキルに対する条件です</p>
+    </div>
 
-      <div class="field">
-        <span class="field-label">スキル<small>選んだすべてを持つ人を表示</small></span>
+    <div class="filters-group">
+      <span class="filters-label">スキル <em>選んだすべてを持つ人</em></span>
+      <input type="search" placeholder="スキルを探す" data-filter-target="skill-picker" aria-label="スキルを探す">
+      <div id="skill-picker" style="margin-top:8px">
         <?php foreach ($categories as $i => $c): ?>
           <?php
-            $hasSelected = false;
+            $hasPicked = false;
             foreach ($c['skills'] as $s) {
-                if (in_array($s['id'], $selectedSkills, true)) { $hasSelected = true; break; }
+                if (in_array($s['id'], $selectedSkills, true)) { $hasPicked = true; break; }
             }
           ?>
-          <details class="cat" <?= ($hasSelected || $i < 2) ? 'open' : '' ?>>
+          <details class="cat" <?= ($hasPicked || $i < 2) ? 'open' : '' ?>>
             <summary><?= e($c['name']) ?></summary>
             <div class="cat-body">
               <?php foreach ($c['skills'] as $s): ?>
-                <label class="chk">
+                <label class="pick <?= is_latin_token($s['name']) ? 'pick-mono' : '' ?>"
+                       data-name="<?= e($s['name']) ?>">
                   <input type="checkbox" name="skill[]" value="<?= (int)$s['id'] ?>"
                          <?= in_array($s['id'], $selectedSkills, true) ? 'checked' : '' ?>>
                   <span><?= e($s['name']) ?></span>
@@ -43,65 +48,64 @@ $hasFilter = $selectedSkills !== [] || $keyword !== '' || $minLevel > 1;
           </details>
         <?php endforeach; ?>
       </div>
+    </div>
 
-      <div class="sidebar-actions">
-        <button type="submit" class="btn btn-primary btn-block">絞り込む</button>
-        <?php if ($hasFilter): ?>
-          <a class="btn btn-block" href="/">条件をクリア</a>
-        <?php endif; ?>
-      </div>
-    </form>
-  </aside>
+    <div class="filters-actions">
+      <button type="submit" class="btn btn-solid btn-wide">絞り込む</button>
+      <?php if ($filtered): ?>
+        <a class="btn btn-wide" href="/">条件を外す</a>
+      <?php endif; ?>
+    </div>
+  </form>
 
   <section class="results">
-    <div class="results-head">
-      <h1><?= count($members) ?> 人</h1>
-      <?php if ($selectedNames !== []): ?>
-        <ul class="chips">
+    <div class="results-bar">
+      <span class="count">
+        <b><?= count($members) ?></b><span>名</span>
+        <?php if ($filtered): ?><em>&nbsp;/ 全 <?= (int)$total ?> 名</em><?php endif; ?>
+      </span>
+      <?php if ($selectedNames !== [] || $minLevel > 1 || $keyword !== ''): ?>
+        <ul class="tags">
           <?php foreach ($selectedNames as $sid => $sname): ?>
-            <li class="chip">
+            <li class="tag <?= is_latin_token($sname) ? 'tag-mono' : '' ?>">
               <?= e($sname) ?>
               <a href="<?= e(url_with(['skill' => array_values(array_diff($selectedSkills, [$sid]))])) ?>"
-                 title="この条件を外す">×</a>
+                 aria-label="<?= e($sname . ' を条件から外す') ?>">×</a>
             </li>
           <?php endforeach; ?>
           <?php if ($minLevel > 1): ?>
-            <li class="chip chip-level"><?= e(level_label($minLevel)) ?> 以上</li>
+            <li class="tag tag-plain"><?= level_meter($minLevel) ?><?= e(level_label($minLevel)) ?> 以上</li>
+          <?php endif; ?>
+          <?php if ($keyword !== ''): ?>
+            <li class="tag tag-plain">名前: <?= e($keyword) ?></li>
           <?php endif; ?>
         </ul>
       <?php endif; ?>
     </div>
 
     <?php if ($members === []): ?>
-      <div class="empty">
-        <p>該当するメンバーがいません。</p>
-        <p><a class="btn" href="/">条件をクリア</a></p>
+      <div class="blank">
+        <p>条件に合うメンバーはいません。</p>
+        <p class="blank-sub">スキルを減らすか、下限レベルを下げると見つかることがあります。</p>
+        <a class="btn" href="/">条件を外す</a>
       </div>
     <?php else: ?>
-      <div class="grid">
+      <div class="roster">
         <?php foreach ($members as $m): ?>
           <?php $mid = (int)$m['id']; ?>
-          <a class="card" href="/members/<?= $mid ?>">
-            <div class="card-head">
-              <?= avatar_html($m, 36) ?>
-              <span class="card-name"><?= e($m['name']) ?></span>
+          <a class="entry" href="/members/<?= $mid ?>">
+            <div class="entry-head">
+              <?= avatar_html($m, 30) ?>
+              <span class="entry-name"><?= e($m['name']) ?></span>
             </div>
-            <ul class="badges">
+            <ul class="chips">
               <?php foreach ($skillsByMember[$mid] ?? [] as $s): ?>
-                <li class="badge lv<?= (int)$s['level'] ?>"
-                    title="<?= e($s['skill_name'] . ' — ' . level_label($s['level'])) ?>">
-                  <?= e($s['skill_name']) ?>
-                </li>
+                <?= skill_chip($s, in_array((int)$s['skill_id'], $selectedSkills, true)) ?>
               <?php endforeach; ?>
             </ul>
           </a>
         <?php endforeach; ?>
       </div>
-      <p class="legend">
-        <span class="badge lv3">指導できる</span>
-        <span class="badge lv2">実務経験あり</span>
-        <span class="badge lv1">学習中</span>
-      </p>
     <?php endif; ?>
   </section>
 

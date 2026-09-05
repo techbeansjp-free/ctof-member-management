@@ -90,6 +90,11 @@ final class MemberRepository
         return $out;
     }
 
+    public static function countAll(): int
+    {
+        return (int)Database::pdo()->query('SELECT COUNT(*) FROM members')->fetchColumn();
+    }
+
     public static function find(int $id): ?array
     {
         $stmt = Database::pdo()->prepare('SELECT * FROM members WHERE id = ?');

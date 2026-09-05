@@ -7,25 +7,27 @@
 <link rel="stylesheet" href="/assets/app.css">
 </head>
 <body>
-<header class="site-header">
-  <a class="brand" href="/">SkillMap<small>シートエフ メンバースキル一覧</small></a>
+<header class="topbar">
+  <a class="wordmark" href="/"><b>SkillMap</b><span>シートエフ メンバー名簿</span></a>
   <?php if (Auth::check()): ?>
-    <nav class="site-nav">
-      <a class="btn btn-primary" href="/members/new">メンバーを登録</a>
+    <div class="topbar-actions">
+      <a class="btn btn-solid" href="/members/new">メンバーを追加</a>
       <form method="post" action="/logout">
         <?= Csrf::field() ?>
-        <button type="submit" class="btn">ログアウト</button>
+        <button type="submit" class="btn btn-quiet">ログアウト</button>
       </form>
-    </nav>
+    </div>
   <?php endif; ?>
 </header>
 
-<main class="container">
+<div class="shell">
   <?php $f = flash(); if ($f !== null): ?>
-    <p class="flash"><?= e($f) ?></p>
+    <p class="notice"><?= e($f) ?></p>
   <?php endif; ?>
-  <?php /* $content は各ビューが生成済みの HTML。変数の出力は各ビュー側で e() 済み */ ?>
+  <?php /* $content は各ビューが生成した HTML。値のエスケープは各ビュー側で済ませている */ ?>
   <?= $content ?>
-</main>
+</div>
+
+<script src="/assets/app.js" defer></script>
 </body>
 </html>

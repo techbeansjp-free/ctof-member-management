@@ -28,6 +28,7 @@ final class MemberController
 
         view('members/index', [
             'members'        => $members,
+            'total'          => MemberRepository::countAll(),
             'skillsByMember' => MemberRepository::skillsForMembers(array_column($members, 'id')),
             'categories'     => SkillRepository::categoriesWithSkills(),
             'selectedSkills' => $skillIds,
