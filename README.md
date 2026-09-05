@@ -49,10 +49,11 @@ docker compose up -d --build
 open http://localhost/          # ログインID: admin
 ```
 
-スキーマを変えたときは volume を作り直す (`docker/mysql/init/*.sql` は **db_data が空のときにしか走らない**)。
+スキーマを変えたときは、マイグレーションを流すか volume を作り直す。
 
 ```bash
-docker compose down -v && docker compose up -d
+bash deploy/after-deploy.sh          # 未適用のマイグレーションを流す
+docker compose down -v && docker compose up -d   # まっさらから作り直す
 ```
 
 ## デプロイ
@@ -64,6 +65,41 @@ docker compose down -v && docker compose up -d
 - `.env.example` に書いたキーは**ランダムな16進48文字で埋められる**。値を選べないキー (秘密情報) だけを置くこと。
   `DB_HOST` / `DB_NAME` / `DB_USER` のような固定値は `docker-compose.yml` の `environment` に持たせている
 - `docker/php/vhost.conf` はインフラ側が生成する。アプリの Apache 設定は `docker/php/apache-http.conf` (名前が衝突すると `git pull --ff-only` が落ちる)
+
+## スキーマを変更する
+
+`docker/mysql/init/*.sql` は **db_data volume が空のときにしか走らない。**
+稼働中の環境にスキーマ変更を届けるのはマイグレーションの役目で、
+`deploy/after-deploy.sh` がデプロイのたびに未適用ぶんを流す。適用済みは `schema_migrations` で管理している。
+
+### 手順 (3つとも必要)
+
+1. **`docker/mysql/migrations/NNN_内容.sql` を追加する**
+   連番は3桁。ファイル名は `[0-9]{3}_[A-Za-z0-9_-]+`。規約外の名前はデプロイ時に弾かれる
+2. **同じ変更を `docker/mysql/init/01_schema.sql` にも入れる**
+   まっさらな環境はマイグレーションではなくこちらから作られるため
+3. **`docker/mysql/init/00_migrations.sql` に 1 行足す**
+   ```sql
+   INSERT INTO schema_migrations (version) VALUES ('003_add_department_to_members');
+   ```
+   これが無いと、まっさらな環境で 2 の変更が入った状態のまま同じマイグレーションが流れて失敗する
+
+3 を忘れるとローカルの `docker compose down -v` で気づく。**スキーマを変えたら一度まっさらから起動して確認すること。**
+
+### 守ること
+
+- **前方互換に保つ。列の追加のみ。削除・リネーム・NOT NULL 化はしない。**
+  デプロイが失敗すると直前のコミットへ自動ロールバックするが、**マイグレーションは巻き戻らない。**
+  古いコードと新しいスキーマが同居する瞬間があるので、古いコードが動かなくなる変更を入れない
+- **1 ファイル 1 ステートメント。**
+  MySQL の DDL はトランザクションで戻せない。複数文を書くと、途中で失敗したとき手で直すことになる
+- データの投入 (INSERT) もマイグレーションに書いてよい。スキルマスタの追加はここが定位置
+
+### 失敗したとき
+
+適用に失敗したマイグレーションは `schema_migrations` に記録されない。
+SQL を直して再デプロイすれば、そこから再実行される。
+ただし DDL が途中まで適用されている場合があるので、**再実行の前に DB の状態を確認すること。**
 
 ## 運用
 
@@ -81,10 +117,11 @@ grep ADMIN_PASSWORD ~/skillmap/.env
 ### スキルを追加する
 
 **画面から追加できない。** 表記ゆれ (React / ReactJS / react.js) で絞り込みが壊れるのを防ぐため、
-マスタは DB でのみ管理している。
+マスタは DB でのみ管理している。**マイグレーションとして追加する** (上の「スキーマを変更する」の手順に従う)。
 
 ```sql
-INSERT INTO skills (category_id, name, sort_order) VALUES (2, 'Svelte Kit', 190);
+-- docker/mysql/migrations/00N_add_sveltekit.sql
+INSERT INTO skills (category_id, name, sort_order) VALUES (2, 'SvelteKit', 190);
 ```
 
 `category_id` は `skill_categories` を参照 (1=プログラミング言語 / 2=フレームワーク・ライブラリ /
@@ -103,6 +140,5 @@ docker compose logs web --tail=100
 - スキルマスタの管理画面 (追加は SQL)
 - パスワード変更機能
 - 操作ログ・更新履歴 (1 アカウント共用のため元々記録できない)
-- 差分マイグレーションの仕組み
 - 自動テスト
 - ログイン試行回数の制限 (パスワードが 48 文字ランダムであることで代替している)
