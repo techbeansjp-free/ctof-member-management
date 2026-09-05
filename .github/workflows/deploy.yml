@@ -37,6 +37,11 @@ env:
   INSTANCE_NAME: skillmap
   FQDN: skillmap.techbeans.info
   ROLE_ARN: arn:aws:iam::164933021637:role/github-actions-skillmap-deploy
+  # Lightsail の静的IP (skillmap-ip)。インスタンスを作り直しても付け替えれば変わらない。
+  # AWS に問い合わせて取ることもできるが、Lightsail の GetInstance / GetStaticIp は
+  # リソースレベルで権限を絞れない (arn:...:* に対して判定される) ため、
+  # そのためだけにロールの権限を広げるのは割に合わない。直書きする。
+  HOST: 3.114.94.22
 
 jobs:
   deploy:
@@ -89,10 +94,6 @@ jobs:
           RUNNER_IP=$(curl -sS --max-time 10 https://checkip.amazonaws.com | tr -d '\n')
           echo "runner の IP: $RUNNER_IP"
 
-          HOST=$(aws lightsail get-instance --instance-name "$INSTANCE_NAME" \
-                   --query 'instance.publicIpAddress' --output text)
-          echo "host=$HOST" >> "$GITHUB_OUTPUT"
-
           # 22番の cidrs に runner の IP を足す。他のポートはそのまま。
           # 開発者の作業IPを消さないので、デプロイ中に手元のSSHが締め出されない。
           jq -r --arg ip "$RUNNER_IP/32" '
@@ -138,7 +139,7 @@ jobs:
               -o UserKnownHostsFile=~/.ssh/known_hosts_deploy \
               -o StrictHostKeyChecking=yes \
               -o ConnectTimeout=15 \
-              "ubuntu@${{ steps.fw.outputs.host }}" \
+              "ubuntu@${{ env.HOST }}" \
               "~/deploy.sh '${{ steps.target.outputs.branch }}'"
 
       - name: 外部から疎通確認
