@@ -1,0 +1,7 @@
+.env
+# インフラ側 (20-deploy.sh) がサーバー上で生成する。追跡しない
+docker-compose.override.yml
+docker/php/vhost.conf
+storage/avatars/*
+!storage/avatars/.gitkeep
+.DS_Store

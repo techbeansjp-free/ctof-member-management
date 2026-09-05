@@ -1,0 +1,45 @@
+services:
+  web:
+    build:
+      context: .
+      dockerfile: docker/php/Dockerfile
+    # アプリは 80 のみ公開する。443 はインフラ側が override で足す
+    ports:
+      - "80:80"
+    volumes:
+      - ./:/var/www/skillmap
+      # アップロード画像。git 管理外なので volume で永続化する
+      - avatar_data:/var/www/skillmap/storage/avatars
+    env_file: .env
+    environment:
+      DB_HOST: db
+      DB_NAME: skillmap
+      DB_USER: skillmap
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  db:
+    image: mysql:8.0
+    # ports は書かない。3306 はコンテナ間ネットワークのみ
+    environment:
+      MYSQL_DATABASE: skillmap
+      MYSQL_USER: skillmap
+      MYSQL_PASSWORD: ${DB_PASS}
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASS}
+      TZ: Asia/Tokyo
+    volumes:
+      - db_data:/var/lib/mysql
+      - ./docker/mysql/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-p${DB_ROOT_PASS}"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    restart: unless-stopped
+
+volumes:
+  db_data:
+  avatar_data:
