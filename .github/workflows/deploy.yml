@@ -143,13 +143,18 @@ jobs:
               "~/deploy.sh '${{ steps.target.outputs.branch }}'"
 
       - name: 外部から疎通確認
+        env:
+          # 講習後にサーバー手前へ足したベーシック認証 (アプリの /login とは別レイヤー)。
+          # 付けずに叩くと 401 になり、下の 2xx チェックが誤って失敗する。
+          BASIC_AUTH_USER: ${{ secrets.BASIC_AUTH_USER }}
+          BASIC_AUTH_PASS: ${{ secrets.BASIC_AUTH_PASS }}
         run: |
           set -euo pipefail
           echo "--- https://$FQDN/ ---"
           # 証明書の検証込みで叩く (ssl_verify_result=0 なら OK)。
           # -L でリダイレクトを追う: 未ログインだと / は /login へ 302 するので、
           # 追わずに 2xx を要求すると正常な状態を失敗と判定してしまう。
-          curl -sSL -o /tmp/body.html \
+          curl -sSL -u "${BASIC_AUTH_USER}:${BASIC_AUTH_PASS}" -o /tmp/body.html \
             -w "最終 HTTP %{http_code} / TLS検証 %{ssl_verify_result} / %{time_total}s / %{url_effective}\n" \
             --max-time 20 "https://$FQDN/" | tee /tmp/result.txt
           grep -q "最終 HTTP 2" /tmp/result.txt || { echo "❌ 2xx が返っていない"; head -30 /tmp/body.html; exit 1; }
